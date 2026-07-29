@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>P2P Мессенджер</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: system-ui, sans-serif; background:#0b0f19; color:#e0e6f0; display:flex; justify-content:center; align-items:center; min-height:100vh; padding:16px; }
+        .app { max-width:520px; width:100%; background:#161e2b; border-radius:28px; padding:24px; box-shadow:0 12px 40px rgba(0,0,0,0.6); }
+        h1 { font-size:22px; font-weight:600; margin-bottom:18px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+        h1 small { font-size:14px; font-weight:400; color:#8899b4; margin-left:auto; }
+        .status { display:flex; align-items:center; gap:8px; font-size:14px; color:#9aabc7; background:#1f2a3a; padding:8px 14px; border-radius:40px; margin-bottom:18px; flex-wrap:wrap; }
+        .status .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#4caf50; flex-shrink:0; }
+        .status .dot.off { background:#f44336; }
+        .input-group { display:flex; gap:10px; margin:12px 0 14px; flex-wrap:wrap; }
+        .input-group input { flex:1; padding:12px 16px; border:none; border-radius:60px; background:#1f2a3a; color:#e0e6f0; font-size:15px; outline:1px solid #2e3b4f; transition:0.2s; min-width:120px; }
+        .input-group input:focus { outline-color:#5b7cfa; background:#263245; }
+        .input-group button { background:#5b7cfa; border:none; padding:12px 22px; border-radius:60px; font-weight:600; color:#fff; cursor:pointer; transition:0.2s; font-size:15px; }
+        .input-group button:hover { background:#4a6ae0; transform:scale(0.97); }
+        .input-group button:disabled { opacity:0.4; pointer-events:none; }
+        .messages { background:#0f1722; border-radius:20px; padding:16px; height:320px; overflow-y:auto; margin:18px 0 12px; display:flex; flex-direction:column; gap:8px; scroll-behavior:smooth; }
+        .messages .msg { background:#1f2a3a; padding:10px 16px; border-radius:18px; max-width:85%; word-wrap:break-word; line-height:1.4; font-size:15px; animation:fade 0.2s; }
+        .messages .msg.me { align-self:flex-end; background:#2e3f66; }
+        .messages .msg.other { align-self:flex-start; background:#1f2a3a; }
+        .messages .msg.system { align-self:center; background:#1f2a3a80; font-size:13px; color:#8899b4; max-width:95%; text-align:center; }
+        .messages .msg small { display:block; font-size:11px; color:#7b8aa8; margin-top:4px; }
+        .peer-id-box { background:#1a2332; padding:12px 16px; border-radius:40px; font-size:14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:6px; }
+        .peer-id-box span { color:#b7c7e3; word-break:break-all; flex:1; }
+        .peer-id-box button { background:transparent; border:1px solid #3b4b66; color:#b7c7e3; padding:6px 14px; border-radius:40px; cursor:pointer; font-size:13px; }
+        .peer-id-box button:hover { background:#2a3a52; }
+        @keyframes fade { from { opacity:0.3; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        .clear-btn { background:transparent; border:1px solid #3b4b66; color:#b7c7e3; padding:6px 14px; border-radius:40px; cursor:pointer; font-size:13px; }
+        .clear-btn:hover { background:#2a3a52; }
+    </style>
+</head>
+<body>
+<div class="app" id="app">
+    <h1>📡 P2P чат <small>PeerJS</small></h1>
+
+    <div class="status" id="statusBar">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Подключение...</span>
+    </div>
+
+    <div class="input-group">
+        <input type="text" id="peerIdInput" placeholder="Введите ID собеседника" />
+        <button id="connectBtn">Подключиться</button>
+        <button id="disconnectBtn" style="background:#6b7b94;">Отключить</button>
+    </div>
+
+    <div class="messages" id="messagesContainer"></div>
+
+    <div class="
+
+
+input-group" style="margin-top:0;">
+        <input type="text" id="messageInput" placeholder="Введите сообщение..." disabled />
+        <button id="sendBtn" disabled>Отправить</button>
+    </div>
+
+    <div class="peer-id-box">
+        <span>🆔 Мой ID: <strong id="myPeerId">—</strong></span>
+        <button id="copyIdBtn">📋 Копировать</button>
+        <button class="clear-btn" id="clearChatBtn">🗑 Очистить чат</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script>
+    (function() {
+        // --- Элементы DOM ---
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const peerIdInput = document.getElementById('peerIdInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const myPeerIdSpan = document.getElementById('myPeerId');
+        const copyIdBtn = document.getElementById('copyIdBtn');
+        const clearChatBtn = document.getElementById('clearChatBtn');
+
+        let peer = null;
+        let conn = null;
+        let myId = null;
+        let isConnecting = false; // флаг чтобы не дублировать подключения
+
+        // --- Вспомогательные функции ---
+        function setStatus(text, isOnline = false) {
+            statusText.textContent = text;
+            statusDot.className = 'dot' + (isOnline ? '' : ' off');
+        }
+
+        function addMessage(text, type = 'other', isSystem = false) {
+            if (!text?.trim()) return;
+            const div = document.createElement('div');
+            div.className = `msg ${type}`;
+            if (isSystem) div.classList.add('system');
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            div.innerHTML = `${text} <small>${time}</small>`;
+            messagesContainer.appendChild(div);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function setConnectedUI(connected) {
+            messageInput.disabled = !connected;
+            sendBtn.disabled = !connected;
+            if (connected) {
+                setStatus('Соединение установлено ✅', true);
+            } else {
+                setStatus('Не подключено', false);
+            }
+        }
+
+        function resetConnection(keepMessages = true) {
+            if (conn) {
+                try { conn.close(); } catch(e) {}
+                conn = null;
+            }
+            isConnecting = false;
+            setConnectedUI(false);
+            if (!keepMessages) {
+                messagesContainer.innerHTML = '';
+            }
+        }
+
+        // --- Инициализация Peer ---
+        function initPeer() {
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+                peer = null;
+            }
+
+            peer = new Peer(undefined, {
+                debug: 0,
+                config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+            });
+
+            peer.on('open', (id) => {
+                myId = id;
+                myPeerIdSpan.textContent = id;
+                setStatus('Ожидание подключения...', false);
+                // Если был старый conn — сбросить
+                resetConnection(true);
+                // Автоматически подключаемся если в поле введён ID (пользователь может нажать кнопку)
+            });
+
+            peer.on('connection', (incomingConn) => {
+                // Если уже есть соединение или идёт подключение — отклоняем новое
+                if (conn || isConnecting) {
+                    incomingConn.close();
+                    return;
+                }
+                setupConnection(incomingConn);
+            });
+
+
+peer.on('disconnected', () => {
+                setStatus('Связь потеряна', false);
+                resetConnection(true);
+                addMessage('🔌 Соединение разорвано', 'system', true);
+            });
+
+            peer.on('error', (err) => {
+                console.warn('Peer error:', err);
+                if (err.type === 'peer-unavailable') {
+                    setStatus('Собеседник не найден', false);
+                    isConnecting = false;
+                } else if (err.type === 'connection-error') {
+                    setStatus('Ошибка соединения', false);
+                    resetConnection(true);
+                    addMessage('❌ Ошибка соединения', 'system', true);
+                } else {
+                    setStatus('Ошибка: ' + (err.message || err.type), false);
+                }
+            });
+        }
+
+        // --- Настройка соединения ---
+        function setupConnection(connection) {
+            if (conn) {
+                connection.close();
+                return;
+            }
+            if (isConnecting) {
+                connection.close();
+                return;
+            }
+
+            conn = connection;
+            isConnecting = false;
+            setConnectedUI(true);
+            addMessage('🤝 Соединение установлено', 'system', true);
+
+            conn.on('data', (data) => {
+                if (typeof data === 'string') {
+                    addMessage(data, 'other');
+                }
+            });
+
+            conn.on('close', () => {
+                addMessage('🔌 Собеседник отключился', 'system', true);
+                resetConnection(true);
+                setStatus('Отключено', false);
+            });
+
+            conn.on('error', (e) => {
+                console.warn('Connection error:', e);
+                resetConnection(true);
+                setStatus('Ошибка канала', false);
+                addMessage('❌ Ошибка соединения', 'system', true);
+            });
+
+            // Если соединение уже открыто
+            if (conn.open) {
+                // уже обработано
+            } else {
+                conn.on('open', () => {
+                    setConnectedUI(true);
+                    addMessage('🤝 Соединение установлено', 'system', true);
+                });
+            }
+        }
+
+        // --- Подключение к собеседнику ---
+        function connectToPeer(remoteId) {
+            if (!remoteId?.trim()) {
+                setStatus('Введите ID собеседника', false);
+                return;
+            }
+            remoteId = remoteId.trim();
+            if (remoteId === myId) {
+                setStatus('Нельзя подключиться к себе', false);
+                return;
+            }
+            if (!peer) {
+                setStatus('Peer не инициализирован', false);
+                return;
+            }
+
+            // Если уже есть соединение — разрываем
+            if (conn) {
+                resetConnection(true);
+                addMessage('🔄 Подключение к новому собеседнику...', 'system', true);
+            }
+
+            if (isConnecting) {
+                setStatus('Уже подключаемся...', false);
+                return;
+            }
+
+            isConnecting = true;
+            setStatus('Подключение...', false);
+
+            try {
+                const newConn = peer.connect(remoteId, { reliable: true });
+                // Обработчик открытия, чтобы снять флаг isConnecting
+                const onOpenHandler = () => {
+                    isConnecting = false;
+                    newConn.off('open', onOpenHandler);
+                };
+                newConn.on('open', onOpenHandler);
+                // Если ошибка подключения — снимем флаг
+                const onErrorHandler = (err) => {
+                    isConnecting = false;
+                    newConn.off('error', onErrorHandler);
+                    setStatus('Ошибка подключения', false);
+                    addMessage('❌ Не удалось подключиться', 'system', true);
+                };
+                new
+
+
+Conn.on('error', onErrorHandler);
+
+                setupConnection(newConn);
+            } catch (e) {
+                isConnecting = false;
+                setStatus('Ошибка: ' + e.message, false);
+                addMessage('❌ Ошибка подключения', 'system', true);
+            }
+        }
+
+        // --- Отправка сообщения ---
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text) return;
+            if (!conn || !conn.open) {
+                setStatus('Нет активного соединения', false);
+                return;
+            }
+            try {
+                conn.send(text);
+                addMessage(text, 'me');
+                messageInput.value = '';
+            } catch (e) {
+                setStatus('Ошибка отправки', false);
+                console.warn(e);
+                addMessage('❌ Ошибка отправки', 'system', true);
+            }
+        }
+
+        // --- Очистка чата ---
+        function clearChat() {
+            messagesContainer.innerHTML = '';
+            addMessage('📋 Чат очищен', 'system', true);
+        }
+
+        // --- Обработчики ---
+        connectBtn.addEventListener('click', () => {
+            connectToPeer(peerIdInput.value);
+        });
+
+        disconnectBtn.addEventListener('click', () => {
+            if (conn) {
+                addMessage('🔌 Вы отключились', 'system', true);
+                resetConnection(true);
+                setStatus('Отключено вручную', false);
+            } else {
+                setStatus('Нет активного соединения', false);
+            }
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        peerIdInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                connectToPeer(peerIdInput.value);
+            }
+        });
+
+        copyIdBtn.addEventListener('click', () => {
+            if (myId) {
+                navigator.clipboard?.writeText(myId).then(() => {
+                    setStatus('ID скопирован ✅', !!conn?.open);
+                }).catch(() => {
+                    // fallback
+                    const range = document.createRange();
+                    const sel = window.getSelection();
+                    const temp = document.createElement('span');
+                    temp.textContent = myId;
+                    document.body.appendChild(temp);
+                    range.selectNode(temp);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    document.execCommand('copy');
+                    temp.remove();
+                    setStatus('ID скопирован ✅', !!conn?.open);
+                });
+            }
+        });
+
+        clearChatBtn.addEventListener('click', clearChat);
+
+        // --- Запуск ---
+        initPeer();
+
+        window.addEventListener('beforeunload', () => {
+            if (peer) peer.destroy();
+        });
+
+        // Если peer переподключился после ошибки
+        setInterval(() => {
+            if (peer && peer.disconnected && !peer.destroyed) {
+                peer.reconnect();
+            }
+        }, 5000);
+    })();
+</script>
+</body>
+</html>
